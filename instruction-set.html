@@ -343,21 +343,59 @@ HLT
             }
         });
 
+        function formatAssemblyLine(line) {
+            var opcodes = ['MOV','ADD','SUB','INC','DEC','CMP','JMP','JC','JNC','JZ','JNZ','JA','JNA','PUSH','POP','CALL','RET','MUL','DIV','AND','OR','XOR','NOT','SHL','SHR','HLT','DB'];
+            var m = line.match(/^([\t ]*[\w\.]+[:])?(.*)$/);
+            var label = m && m[1] ? m[1] : '';
+            var code = m && m[2] ? m[2] : line;
+            var trimmed = code.trim();
+
+            if (trimmed) {
+                // Opcode a mayúsculas obligatorio
+                var wm = trimmed.match(/^([a-zA-Z]{2,4})\b/);
+                if (wm) {
+                    var upperOp = wm[1].toUpperCase();
+                    if (opcodes.indexOf(upperOp) !== -1) {
+                        trimmed = upperOp + trimmed.slice(wm[1].length);
+                    }
+                }
+                // Registros A, B, C, D, SP a mayúsculas (excepto dentro de strings)
+                trimmed = trimmed.replace(/\b([abcd]|sp)\b/gi, function(match, r, offset, full) {
+                    var quotes = (full.slice(0, offset).match(/['"]/g) || []).length;
+                    if (quotes % 2 === 1) return match;
+                    return match.toUpperCase();
+                });
+            }
+
+            if (label && trimmed) return label + '\n' + trimmed;
+            if (label) return label;
+            var leading = code.match(/^[\t ]*/);
+            return (leading ? leading[0] : '') + trimmed;
+        }
+
         function cleanAssemblyResponse(raw) {
             var cleaned = raw.replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '');
             var lines = cleaned.split('\n');
             var resultLines = [];
+            var prevWasEmpty = false;
             for (var i = 0; i < lines.length; i++) {
                 var line = lines[i];
                 var commentIdx = line.indexOf(';');
                 if (commentIdx !== -1) {
                     line = line.substring(0, commentIdx);
                 }
-                if (line.trim().length > 0) {
-                    resultLines.push(line);
+                if (line.trim().length === 0) {
+                    // Permitir una sola línea en blanco entre bloques lógicos (formato humano)
+                    if (!prevWasEmpty && resultLines.length > 0) {
+                        resultLines.push('');
+                        prevWasEmpty = true;
+                    }
+                } else {
+                    resultLines.push(formatAssemblyLine(line));
+                    prevWasEmpty = false;
                 }
             }
-            return resultLines.join('\n');
+            return resultLines.join('\n').trim();
         }
 
         function getCandidateModels(key) {
@@ -515,14 +553,12 @@ HLT
                 "- NO uses ninguna otra instrucción (NO int, NO syscall, NO lea, NO loop, etc.).",
                 "- Direccionamiento indirecto soportado: [A], [B], [C], [D], [SP+offset], [constante].",
                 "",
-                "REGLAS CRÍTICAS DE ESTILO PARA EXAMEN UNIVERSITARIO:",
-                "- Eres un estudiante de primer año de universidad resolviendo un ejercicio básico de examen.",
-                "- NO pongas NINGÚN comentario (no uses el caracter ';' en ninguna parte).",
-                "- NO pongas texto introductorio, ni saludos, ni explicaciones de ninguna clase.",
-                "- NO pongas bloques de formato markdown (NO uses comillas triples ``` ni ```assembly).",
-                "- Devuelve EXCLUSIVAMENTE el código ensamblador puro línea por línea.",
-                "- Mantén el código conciso, simple y directo (de 10 a 25 líneas).",
-                "- Siempre coloca la instrucción HLT al final o en la etiqueta de salida (ej. fin:) para detener la CPU correctamente."
+                "REGLAS CRÍTICAS DE ESTILO Y COMPLETITUD (OBLIGATORIAS):",
+                "1. INSTRUCCIONES Y REGISTROS EN MAYÚSCULAS: Escribe siempre en mayúsculas todas las instrucciones y registros (ej. MOV, ADD, SUB, CMP, JMP, JA, JNC, JZ, HLT, A, B, C, D, SP). Las etiquetas van en minúsculas (ej. inicio:, fin:).",
+                "2. PROGRAMA COMPLETO Y NO FLOJO: Si el ejercicio pide comparar o verificar registros (ej. A y B) o evaluar condiciones, inicialízalos primero con valores numéricos de prueba razonables (ej. MOV A, 10 y MOV B, 5) para que sea un programa completo y ejecutable desde el primer paso.",
+                "3. ESPACIADO HUMANO Y NATURAL: Separa los bloques lógicos con UNA línea en blanco (por ejemplo, deja una línea en blanco entre la inicialización, el bloque de comparación/lógica, y las etiquetas con HLT). No pegues todas las líneas juntas.",
+                "4. DETENCIÓN: Coloca siempre la instrucción HLT al final o en la etiqueta de salida (ej. fin: HLT) para detener la CPU correctamente.",
+                "5. SIN COMENTARIOS NI MARKDOWN: NO uses comentarios con ';', NO pongas introducciones ni explicaciones, NO uses bloques con ``` ni ```assembly. Devuelve estrictamente el código ensamblador puro."
             ].join('\n');
 
             var payload = {
