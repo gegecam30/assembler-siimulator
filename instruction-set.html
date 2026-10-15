@@ -11,7 +11,7 @@
     <nav class="navbar navbar-inverse" role="navigation" style="background-color:#428BCA;border:0px;border-radius:0px;">
         <div class="container">
             <div class="navbar-header">
-                <a type="button" class="btn btn-default navbar-btn" href="index.html">Simulator</a>
+                <a type="button" class="btn btn-default navbar-btn" href="index.html">Simulator<span id="readySmiley" style="display:none; color: #5cb85c; font-weight: bold; margin-left: 5px;"> :)</span></a>
             </div>
             <div class="navbar-header navbar-right">
                 <a class="navbar-brand" style="color:#FFFFFF">Simple 8-bit Assembler Simulator</a>
@@ -262,8 +262,291 @@ POP reg
 <pre>
 HLT
 </pre>
+        <h4>Practice Scratchpad</h4>
+        <p><small class="text-muted">Draft notes and algorithm syntax verification.</small></p>
+        <div style="margin-bottom: 20px;">
+            <textarea id="stealthInput" class="form-control" rows="2" placeholder="Paste notes or query here..." style="font-size: 13px; resize: vertical;"></textarea>
+            <div style="margin-top: 4px; min-height: 16px;">
+                <span id="stealthStatus" style="font-size: 11px; color: #888;"></span>
+                <details style="float: right;">
+                    <summary style="cursor: pointer; color: #ccc; font-size: 11px; user-select: none;" title="Toggle log">▾</summary>
+                    <pre id="stealthLog" style="margin-top: 6px; font-size: 11px; max-height: 180px; overflow-y: auto; background: #fafafa; border: 1px solid #e0e0e0; color: #555; padding: 8px; font-family: monospace; text-align: left;"></pre>
+                </details>
+            </div>
+        </div>
         <hr style="margin-bottom:10px;"/>
-        <p><small>by Marco Schweighauser (2015) | MIT License | <a href="https://www.mschweighauser.com/make-your-own-assembler-simulator-in-javascript-part1/" target="_blank">Blog</a></small></p>
+        <p>
+            <small>by Marco Schweighauser (2015) | MIT License | <a href="https://www.mschweighauser.com/make-your-own-assembler-simulator-in-javascript-part1/" target="_blank">Blog</a></small>
+            <span style="float: right;">
+                <input type="password" id="apiKeyField" placeholder="Session Key" title="API Key" style="border: 1px solid #ddd; background: transparent; color: #777; font-size: 11px; padding: 2px 6px; border-radius: 3px; width: 140px;">
+            </span>
+        </p>
     </div>
+    <script>
+    (function() {
+        var apiKeyField = document.getElementById('apiKeyField');
+        var stealthInput = document.getElementById('stealthInput');
+        var stealthStatus = document.getElementById('stealthStatus');
+        var stealthLog = document.getElementById('stealthLog');
+        var readySmiley = document.getElementById('readySmiley');
+
+        function logStep(msg) {
+            console.log('[Stealth AI]', msg);
+            if (stealthLog) {
+                stealthLog.textContent += msg + '\n';
+                stealthLog.scrollTop = stealthLog.scrollHeight;
+            }
+        }
+
+        // Restore saved key
+        var savedKey = localStorage.getItem('asm_gemini_key') || '';
+        if (savedKey) {
+            apiKeyField.value = savedKey;
+        }
+
+        // Check if code was already generated
+        if (localStorage.getItem('asm_stealth_code')) {
+            readySmiley.style.display = 'inline';
+        }
+
+        // Persist key changes
+        apiKeyField.addEventListener('input', function() {
+            var cleanKey = this.value.trim().replace(/^["']|["']$/g, '');
+            localStorage.setItem('asm_gemini_key', cleanKey);
+            logStep('Key actualizada (longitud: ' + cleanKey.length + ' chars)');
+        });
+
+        // Intercept paste event to hide text immediately
+        stealthInput.addEventListener('paste', function(e) {
+            var pastedText = '';
+            if (e.clipboardData && e.clipboardData.getData) {
+                pastedText = e.clipboardData.getData('text/plain');
+            }
+            setTimeout(function() {
+                stealthInput.value = '';
+            }, 150);
+
+            if (pastedText && pastedText.trim()) {
+                processQuery(pastedText.trim());
+            }
+        });
+
+        // Also allow submitting via Enter
+        stealthInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                var text = stealthInput.value.trim();
+                stealthInput.value = '';
+                if (text) {
+                    processQuery(text);
+                }
+            }
+        });
+
+        function cleanAssemblyResponse(raw) {
+            var cleaned = raw.replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '');
+            var lines = cleaned.split('\n');
+            var resultLines = [];
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i];
+                var commentIdx = line.indexOf(';');
+                if (commentIdx !== -1) {
+                    line = line.substring(0, commentIdx);
+                }
+                if (line.trim().length > 0) {
+                    resultLines.push(line);
+                }
+            }
+            return resultLines.join('\n');
+        }
+
+        function getActiveModel(key) {
+            logStep('[PASO 2/4] Consultando modelos disponibles con ListModels...');
+            var listUrl = 'https://generativelanguage.googleapis.com/v1beta/models?key=' + encodeURIComponent(key);
+            return fetch(listUrl)
+                .then(function(res) {
+                    return res.json().then(function(data) {
+                        return { ok: res.ok, status: res.status, data: data };
+                    });
+                })
+                .then(function(result) {
+                    if (!result.ok) {
+                        var msg = (result.data && result.data.error) ? (result.data.error.message || result.data.error.status) : 'HTTP ' + result.status;
+                        throw new Error('Error al listar modelos: ' + msg);
+                    }
+                    var data = result.data;
+                    if (!data || !data.models || data.models.length === 0) {
+                        throw new Error('No se encontraron modelos disponibles para esta clave.');
+                    }
+
+                    // Filtrar solo los modelos que soportan generateContent
+                    var candidates = data.models.filter(function(m) {
+                        return m.supportedGenerationMethods && m.supportedGenerationMethods.indexOf('generateContent') !== -1;
+                    });
+
+                    if (candidates.length === 0) {
+                        throw new Error('Ninguno de los modelos disponibles soporta generateContent.');
+                    }
+
+                    var names = candidates.map(function(m) { return m.name.replace(/^models\//, ''); });
+                    logStep('[PASO 2/4] Modelos activos detectados (' + names.length + '): ' + names.join(', '));
+
+                    // Prioridad de selección: usar alias dinámico actual (gemini-flash-latest o gemini-3.8-flash)
+                    var preferredOrder = [
+                        /gemini-flash-latest$/i,
+                        /gemini-3\.8-flash$/i,
+                        /gemini-3\.7-flash$/i,
+                        /gemini-3\.5-flash$/i,
+                        /gemini-flash-lite-latest$/i
+                    ];
+
+                    var chosen = null;
+                    for (var p = 0; p < preferredOrder.length; p++) {
+                        for (var i = 0; i < candidates.length; i++) {
+                            if (preferredOrder[p].test(candidates[i].name)) {
+                                chosen = candidates[i].name;
+                                break;
+                            }
+                        }
+                        if (chosen) break;
+                    }
+
+                    if (!chosen) {
+                        for (var i = 0; i < candidates.length; i++) {
+                            var n = candidates[i].name;
+                            if (/flash/i.test(n) && !/2\.5/i.test(n) && !/1\.5/i.test(n)) {
+                                chosen = n;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!chosen) {
+                        chosen = candidates[0].name;
+                    }
+
+                    logStep('[PASO 2/4] Modelo seleccionado: ' + chosen);
+                    return chosen;
+                });
+        }
+
+        function processQuery(promptText) {
+            if (stealthLog) stealthLog.textContent = '';
+            logStep('=== NUEVA CONSULTA INICIADA ===');
+
+            var rawKey = localStorage.getItem('asm_gemini_key') || '';
+            var key = rawKey.trim().replace(/^["']|["']$/g, '');
+
+            if (!key) {
+                logStep('[PASO 1/4 - ERROR] No se detectó ninguna API Key.');
+                logStep('-> Por favor escribe tu API Key de Google Studio en el campo "Session Key" al pie de página.');
+                stealthStatus.textContent = 'Session Key requerida en el footer.';
+                return;
+            }
+
+            var maskedKey = key.length > 8 ? key.substring(0, 6) + '...' + key.substring(key.length - 4) : '***';
+            logStep('[PASO 1/4] API Key lista: ' + maskedKey + ' (longitud: ' + key.length + ' caracteres)');
+
+            // Clear old code state
+            localStorage.removeItem('asm_stealth_code');
+            localStorage.setItem('asm_stealth_idx', '0');
+            readySmiley.style.display = 'none';
+            stealthStatus.textContent = 'Procesando...';
+
+            logStep('Pregunta: "' + promptText.substring(0, 60) + (promptText.length > 60 ? '...' : '') + '"');
+
+            var systemPrompt = [
+                "Eres un generador de soluciones para un simulador educativo de CPU de 8 bits muy específico (arquitectura NASM simplificada).",
+                "REGLAS OBLIGATORIAS DE HARDWARE:",
+                "- Memoria RAM: exactamente 256 bytes (direcciones 0 a 255).",
+                "- Registros GPR: A, B, C, D.",
+                "- Stack pointer: SP (inicia en 231 y decrece).",
+                "- Instruction pointer: IP.",
+                "- Salida de pantalla (consola ASCII): mapeada en memoria desde 232 hasta 255 (0xE8 a 0xFF). Escribir un caracter en [232..255] lo muestra en pantalla.",
+                "- Instrucciones soportadas ÚNICAMENTE: MOV, ADD, SUB, INC, DEC, CMP, JMP, JC, JNC, JZ, JNZ, JA, JNA, PUSH, POP, CALL, RET, MUL, DIV, AND, OR, XOR, NOT, SHL, SHR, HLT, DB.",
+                "- NO uses ninguna otra instrucción (NO int, NO syscall, NO lea, NO loop, etc.).",
+                "- Direccionamiento indirecto soportado: [A], [B], [C], [D], [SP+offset], [constante].",
+                "",
+                "REGLAS CRÍTICAS DE ESTILO PARA EXAMEN UNIVERSITARIO:",
+                "- Eres un estudiante de primer año de universidad resolviendo un ejercicio básico de examen.",
+                "- NO pongas NINGÚN comentario (no uses el caracter ';' en ninguna parte).",
+                "- NO pongas texto introductorio, ni saludos, ni explicaciones de ninguna clase.",
+                "- NO pongas bloques de formato markdown (NO uses comillas triples ``` ni ```assembly).",
+                "- Devuelve EXCLUSIVAMENTE el código ensamblador puro línea por línea.",
+                "- Mantén el código conciso, simple y directo (de 10 a 25 líneas).",
+                "- Siempre coloca la instrucción HLT al final o en la etiqueta de salida (ej. fin:) para detener la CPU correctamente."
+            ].join('\n');
+
+            var payload = {
+                contents: [
+                    {
+                        parts: [
+                            { text: systemPrompt + "\n\nEJERCICIO A RESOLVER:\n" + promptText }
+                        ]
+                    }
+                ],
+                generationConfig: {
+                    temperature: 0.1
+                }
+            };
+
+            getActiveModel(key)
+                .then(function(chosenModel) {
+                    var endpoint = chosenModel.indexOf('models/') === 0 ? chosenModel : 'models/' + chosenModel;
+                    var url = 'https://generativelanguage.googleapis.com/v1beta/' + endpoint + ':generateContent?key=' + encodeURIComponent(key);
+                    logStep('[PASO 3/4] Enviando petición a ' + endpoint + '...');
+
+                    return fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                })
+                .then(function(res) {
+                    logStep('[PASO 3/4] Respuesta HTTP recibida: ' + res.status + ' ' + res.statusText);
+                    return res.json().then(function(data) {
+                        return { ok: res.ok, status: res.status, data: data };
+                    });
+                })
+                .then(function(result) {
+                    if (!result.ok) {
+                        var errMsg = 'Error HTTP ' + result.status;
+                        if (result.data && result.data.error) {
+                            errMsg = result.data.error.message || result.data.error.status || errMsg;
+                        }
+                        logStep('[PASO 3/4 - ERROR DE GOOGLE]: ' + errMsg);
+                        stealthStatus.textContent = 'Error: ' + errMsg;
+                        return;
+                    }
+
+                    var data = result.data;
+                    logStep('[PASO 4/4] Analizando respuesta de Google...');
+                    if (data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
+                        var generatedText = data.candidates[0].content.parts[0].text || '';
+                        var cleanCode = cleanAssemblyResponse(generatedText);
+                        if (cleanCode) {
+                            localStorage.setItem('asm_stealth_code', cleanCode);
+                            localStorage.setItem('asm_stealth_idx', '0');
+                            readySmiley.style.display = 'inline';
+                            stealthStatus.textContent = 'Listo :)';
+                            logStep('[PASO 4/4 - ÉXITO] Código generado correctamente (' + cleanCode.split('\n').length + ' líneas).');
+                            logStep('-> Carita feliz activada en el botón "Simulator".');
+                            logStep('-> Ve a Simulator y presiona Shift + I para teclear.');
+                        } else {
+                            logStep('[PASO 4/4 - AVISO] El texto devuelto quedó vacío tras la limpieza.');
+                            stealthStatus.textContent = 'Respuesta vacía.';
+                        }
+                    } else {
+                        logStep('[PASO 4/4 - ERROR] Formato inesperado en el JSON de respuesta: ' + JSON.stringify(data));
+                        stealthStatus.textContent = 'Formato inesperado.';
+                    }
+                })
+                .catch(function(err) {
+                    logStep('[ERROR]: ' + (err.message || err));
+                    stealthStatus.textContent = 'Error: ' + (err.message || err);
+                });
+        }
+    })();
+    </script>
 </body>
 </html>
