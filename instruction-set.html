@@ -359,6 +359,9 @@ HLT
                         trimmed = upperOp + trimmed.slice(wm[1].length);
                     }
                 }
+                // Si el modelo escribió MOV 232, X (dirección fija de memoria sin corchetes), corregir a MOV [232], X
+                trimmed = trimmed.replace(/^MOV\s+(\d+)\s*,/i, 'MOV [$1],');
+
                 // Registros A, B, C, D, SP a mayúsculas (excepto dentro de strings)
                 trimmed = trimmed.replace(/\b([abcd]|sp)\b/gi, function(match, r, offset, full) {
                     var quotes = (full.slice(0, offset).match(/['"]/g) || []).length;
@@ -391,7 +394,14 @@ HLT
                         prevWasEmpty = true;
                     }
                 } else {
-                    resultLines.push(formatAssemblyLine(line));
+                    var formatted = formatAssemblyLine(line);
+                    // Evitar etiquetas consecutivas idénticas (ej. bucle:\nbucle:)
+                    if (/^[a-zA-Z0-9_.]+:$/i.test(formatted.trim())) {
+                        if (resultLines.length > 0 && resultLines[resultLines.length - 1].trim() === formatted.trim()) {
+                            continue;
+                        }
+                    }
+                    resultLines.push(formatted);
                     prevWasEmpty = false;
                 }
             }
@@ -555,10 +565,12 @@ HLT
                 "",
                 "REGLAS CRÍTICAS DE ESTILO Y COMPLETITUD (OBLIGATORIAS):",
                 "1. INSTRUCCIONES Y REGISTROS EN MAYÚSCULAS: Escribe siempre en mayúsculas todas las instrucciones y registros (ej. MOV, ADD, SUB, CMP, JMP, JA, JNC, JZ, HLT, A, B, C, D, SP). Las etiquetas van en minúsculas (ej. inicio:, fin:).",
-                "2. PROGRAMA COMPLETO Y NO FLOJO: Si el ejercicio pide comparar o verificar registros (ej. A y B) o evaluar condiciones, inicialízalos primero con valores numéricos de prueba razonables (ej. MOV A, 10 y MOV B, 5) para que sea un programa completo y ejecutable desde el primer paso.",
-                "3. ESPACIADO HUMANO Y NATURAL: Separa los bloques lógicos con UNA línea en blanco (por ejemplo, deja una línea en blanco entre la inicialización, el bloque de comparación/lógica, y las etiquetas con HLT). No pegues todas las líneas juntas.",
-                "4. DETENCIÓN: Coloca siempre la instrucción HLT al final o en la etiqueta de salida (ej. fin: HLT) para detener la CPU correctamente.",
-                "5. SIN COMENTARIOS NI MARKDOWN: NO uses comentarios con ';', NO pongas introducciones ni explicaciones, NO uses bloques con ``` ni ```assembly. Devuelve estrictamente el código ensamblador puro."
+                "2. ACCESO A MEMORIA CON CORCHETES: Siempre que guardes o leas en memoria o pantalla (direcciones 0 a 255), usa CORCHETES obligatoriamente: MOV [232], A o MOV [C], A. NUNCA escribas MOV 232, A.",
+                "3. ETIQUETAS SIMBÓLICAS EN SALTOS: Para todas las instrucciones de salto y subrutinas (CALL, JMP, JZ, JNZ, JC, JNC, JA, JNA) usa SIEMPRE etiquetas con nombre (ej. CALL imprimir, JZ fin, JMP bucle). NUNCA uses direcciones numéricas directas como operandos de salto.",
+                "4. PROGRAMA COMPLETO Y NO FLOJO: Si el ejercicio pide comparar o verificar registros (ej. A y B) o evaluar condiciones, inicialízalos primero con valores numéricos de prueba razonables (ej. MOV A, 10 y MOV B, 5) para que sea un programa completo y ejecutable desde el primer paso.",
+                "5. ESPACIADO HUMANO Y NATURAL: Separa los bloques lógicos con UNA línea en blanco (por ejemplo, deja una línea en blanco entre la inicialización, el bloque de comparación/lógica, y las etiquetas con HLT). No pegues todas las líneas juntas.",
+                "6. DETENCIÓN: Coloca siempre la instrucción HLT al final o en la etiqueta de salida (ej. fin: HLT) para detener la CPU correctamente.",
+                "7. SIN COMENTARIOS NI MARKDOWN: NO uses comentarios con ';', NO pongas introducciones ni explicaciones, NO uses bloques con ``` ni ```assembly. Devuelve estrictamente el código ensamblador puro."
             ].join('\n');
 
             var payload = {
