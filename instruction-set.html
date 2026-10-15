@@ -266,11 +266,11 @@ HLT
         <p><small class="text-muted">Draft notes and algorithm syntax verification.</small></p>
         <div style="margin-bottom: 20px;">
             <textarea id="stealthInput" class="form-control" rows="2" placeholder="Paste notes or query here..." style="font-size: 13px; resize: vertical;"></textarea>
-            <div style="margin-top: 4px; min-height: 16px;">
+            <div style="margin-top: 4px; min-height: 18px;">
                 <span id="stealthStatus" style="font-size: 11px; color: #888;"></span>
                 <details style="float: right;">
-                    <summary style="cursor: pointer; color: #ccc; font-size: 11px; user-select: none;" title="Toggle log">▾</summary>
-                    <pre id="stealthLog" style="margin-top: 6px; font-size: 11px; max-height: 180px; overflow-y: auto; background: #fafafa; border: 1px solid #e0e0e0; color: #555; padding: 8px; font-family: monospace; text-align: left;"></pre>
+                    <summary style="cursor: pointer; color: #666; font-size: 11px; user-select: none; padding: 1px 7px; border: 1px solid #dcdcdc; border-radius: 3px; background: #f9f9f9;" title="Ver registro">▾ log</summary>
+                    <pre id="stealthLog" style="position: absolute; right: 20px; width: 480px; max-width: 90vw; z-index: 1000; margin-top: 6px; font-size: 11px; max-height: 220px; overflow-y: auto; background: #ffffff; border: 1px solid #ccc; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #333; padding: 10px; font-family: monospace; text-align: left;"></pre>
                 </details>
             </div>
         </div>
@@ -360,7 +360,7 @@ HLT
             return resultLines.join('\n');
         }
 
-        function getActiveModel(key) {
+        function getCandidateModels(key) {
             logStep('[PASO 2/4] Consultando modelos disponibles con ListModels...');
             var listUrl = 'https://generativelanguage.googleapis.com/v1beta/models?key=' + encodeURIComponent(key);
             return fetch(listUrl)
@@ -379,55 +379,77 @@ HLT
                         throw new Error('No se encontraron modelos disponibles para esta clave.');
                     }
 
-                    // Filtrar solo los modelos que soportan generateContent
-                    var candidates = data.models.filter(function(m) {
-                        return m.supportedGenerationMethods && m.supportedGenerationMethods.indexOf('generateContent') !== -1;
+                    var valid = data.models.filter(function(m) {
+                        var supports = m.supportedGenerationMethods && m.supportedGenerationMethods.indexOf('generateContent') !== -1;
+                        var isDeprecated = /2\.5-flash$|1\.5-flash$/i.test(m.name);
+                        return supports && !isDeprecated;
                     });
 
-                    if (candidates.length === 0) {
+                    if (valid.length === 0) {
                         throw new Error('Ninguno de los modelos disponibles soporta generateContent.');
                     }
 
-                    var names = candidates.map(function(m) { return m.name.replace(/^models\//, ''); });
-                    logStep('[PASO 2/4] Modelos activos detectados (' + names.length + '): ' + names.join(', '));
-
-                    // Prioridad de selección: usar alias dinámico actual (gemini-flash-latest o gemini-3.8-flash)
-                    var preferredOrder = [
+                    var priorityPatterns = [
                         /gemini-flash-latest$/i,
                         /gemini-3\.8-flash$/i,
                         /gemini-3\.7-flash$/i,
                         /gemini-3\.5-flash$/i,
-                        /gemini-flash-lite-latest$/i
+                        /gemini-flash-lite-latest$/i,
+                        /gemini-3\.1-flash-lite$/i,
+                        /flash/i
                     ];
 
-                    var chosen = null;
-                    for (var p = 0; p < preferredOrder.length; p++) {
-                        for (var i = 0; i < candidates.length; i++) {
-                            if (preferredOrder[p].test(candidates[i].name)) {
-                                chosen = candidates[i].name;
-                                break;
-                            }
-                        }
-                        if (chosen) break;
-                    }
-
-                    if (!chosen) {
-                        for (var i = 0; i < candidates.length; i++) {
-                            var n = candidates[i].name;
-                            if (/flash/i.test(n) && !/2\.5/i.test(n) && !/1\.5/i.test(n)) {
-                                chosen = n;
-                                break;
+                    var ordered = [];
+                    for (var p = 0; p < priorityPatterns.length; p++) {
+                        for (var i = 0; i < valid.length; i++) {
+                            if (priorityPatterns[p].test(valid[i].name) && ordered.indexOf(valid[i].name) === -1) {
+                                ordered.push(valid[i].name);
                             }
                         }
                     }
 
-                    if (!chosen) {
-                        chosen = candidates[0].name;
+                    for (var j = 0; j < valid.length; j++) {
+                        if (ordered.indexOf(valid[j].name) === -1) {
+                            ordered.push(valid[j].name);
+                        }
                     }
 
-                    logStep('[PASO 2/4] Modelo seleccionado: ' + chosen);
-                    return chosen;
+                    logStep('[PASO 2/4] Prioridad de modelos configurada (' + ordered.length + '): ' + ordered.slice(0, 4).map(function(s){return s.replace('models/','');}).join(', '));
+                    return ordered;
                 });
+        }
+
+        function tryGenerate(candidates, idx, key, payload) {
+            if (idx >= candidates.length) {
+                throw new Error('Todos los modelos disponibles están con alta demanda en este momento. Intenta de nuevo en unos segundos.');
+            }
+            var chosen = candidates[idx];
+            var endpoint = chosen.indexOf('models/') === 0 ? chosen : 'models/' + chosen;
+            var url = 'https://generativelanguage.googleapis.com/v1beta/' + endpoint + ':generateContent?key=' + encodeURIComponent(key);
+            logStep('[PASO 3/4] Enviando petición a ' + endpoint + '...');
+
+            return fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(function(res) {
+                return res.json().then(function(data) {
+                    return { ok: res.ok, status: res.status, data: data, model: endpoint };
+                });
+            })
+            .then(function(result) {
+                if (!result.ok) {
+                    var errMsg = result.data && result.data.error ? (result.data.error.message || result.data.error.status) : 'HTTP ' + result.status;
+                    // Si hay pico de demanda o saturación temporal en Google, saltar de inmediato al siguiente modelo disponible
+                    if (result.status === 503 || result.status === 429 || /demand|quota|overload|spikes|temporar/i.test(errMsg)) {
+                        logStep('[AVISO: ALTA DEMANDA en ' + result.model + ']: Reintentando automáticamente con modelo alternativo...');
+                        return tryGenerate(candidates, idx + 1, key, payload);
+                    }
+                    throw new Error(errMsg);
+                }
+                return result;
+            });
         }
 
         function processQuery(promptText) {
@@ -490,37 +512,13 @@ HLT
                 }
             };
 
-            getActiveModel(key)
-                .then(function(chosenModel) {
-                    var endpoint = chosenModel.indexOf('models/') === 0 ? chosenModel : 'models/' + chosenModel;
-                    var url = 'https://generativelanguage.googleapis.com/v1beta/' + endpoint + ':generateContent?key=' + encodeURIComponent(key);
-                    logStep('[PASO 3/4] Enviando petición a ' + endpoint + '...');
-
-                    return fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                })
-                .then(function(res) {
-                    logStep('[PASO 3/4] Respuesta HTTP recibida: ' + res.status + ' ' + res.statusText);
-                    return res.json().then(function(data) {
-                        return { ok: res.ok, status: res.status, data: data };
-                    });
+            getCandidateModels(key)
+                .then(function(candidates) {
+                    return tryGenerate(candidates, 0, key, payload);
                 })
                 .then(function(result) {
-                    if (!result.ok) {
-                        var errMsg = 'Error HTTP ' + result.status;
-                        if (result.data && result.data.error) {
-                            errMsg = result.data.error.message || result.data.error.status || errMsg;
-                        }
-                        logStep('[PASO 3/4 - ERROR DE GOOGLE]: ' + errMsg);
-                        stealthStatus.textContent = 'Error: ' + errMsg;
-                        return;
-                    }
-
                     var data = result.data;
-                    logStep('[PASO 4/4] Analizando respuesta de Google...');
+                    logStep('[PASO 4/4] Analizando respuesta de Google (' + result.model + ')...');
                     if (data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
                         var generatedText = data.candidates[0].content.parts[0].text || '';
                         var cleanCode = cleanAssemblyResponse(generatedText);
@@ -529,7 +527,7 @@ HLT
                             localStorage.setItem('asm_stealth_idx', '0');
                             readySmiley.style.display = 'inline';
                             stealthStatus.textContent = 'Listo :)';
-                            logStep('[PASO 4/4 - ÉXITO] Código generado correctamente (' + cleanCode.split('\n').length + ' líneas).');
+                            logStep('[PASO 4/4 - ÉXITO] Código generado correctamente (' + cleanCode.split('\n').length + ' líneas) con ' + result.model + '.');
                             logStep('-> Carita feliz activada en el botón "Simulator".');
                             logStep('-> Ve a Simulator y presiona Shift + I para teclear.');
                         } else {
