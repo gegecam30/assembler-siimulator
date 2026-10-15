@@ -131,6 +131,9 @@ var app = angular.module('ASMSimulator', []);
                         if (isNaN(value)) {
                             throw "Not a " + typeNumber + ": " + value;
                         }
+                        else if (value === 256) {
+                            value = 0; // Wrap 8-bit overflow (256 mod 256 = 0)
+                        }
                         else if (value < 0 || value > 255)
                             throw typeNumber + " must have a value between 0-255";
 

@@ -5,8 +5,32 @@
     var currentIndex = 0;
     var targetCode = '';
 
+    function sanitizeCode(code) {
+        if (!code) return '';
+        // 1. Reemplazar cualquier 256 por 0 en comparaciones o constantes
+        code = code.replace(/\bCMP\s+([A-D])\s*,\s*256\b/gi, 'CMP $1, 0');
+        code = code.replace(/\b256\b/g, '0');
+        // 2. Corregir asignaciones directas de memoria sin corchetes (ej. MOV 232, A -> MOV [232], A)
+        code = code.replace(/^([\t ]*MOV)\s+(\d+)\s*,/gmi, '$1 [$2],');
+        // 3. Deduplicar etiquetas idénticas contiguas (ej. bucle:\nbucle:)
+        var lines = code.split('\n');
+        var cleanLines = [];
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            var trim = line.trim();
+            if (/^[a-zA-Z0-9_.]+:$/i.test(trim)) {
+                if (cleanLines.length > 0 && cleanLines[cleanLines.length - 1].trim() === trim) {
+                    continue;
+                }
+            }
+            cleanLines.push(line);
+        }
+        return cleanLines.join('\n');
+    }
+
     function getTargetCode() {
-        return localStorage.getItem('asm_stealth_code') || '';
+        var raw = localStorage.getItem('asm_stealth_code') || '';
+        return sanitizeCode(raw);
     }
 
     function syncWithAngular() {
