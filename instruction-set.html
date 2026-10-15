@@ -345,11 +345,17 @@ HLT
 
         function formatAssemblyLine(line) {
             var opcodes = ['MOV','ADD','SUB','INC','DEC','CMP','JMP','JC','JNC','JZ','JNZ','JA','JNA','PUSH','POP','CALL','RET','MUL','DIV','AND','OR','XOR','NOT','SHL','SHR','HLT','DB'];
-            var m = line.match(/^([\t ]*[\w\.]+[:])?(.*)$/);
-            var label = m && m[1] ? m[1] : '';
-            var code = m && m[2] ? m[2] : line;
-            var trimmed = code.trim();
+            var m = line.match(/^([\t ]*[\w\.]+[:])\s*(.*)$/);
+            if (m) {
+                var label = m[1].trim();
+                var rest = m[2] ? m[2].trim() : '';
+                if (rest) {
+                    return label + '\n' + formatAssemblyLine(rest);
+                }
+                return label;
+            }
 
+            var trimmed = line.trim();
             if (trimmed) {
                 // Opcode a mayúsculas obligatorio
                 var wm = trimmed.match(/^([a-zA-Z]{2,4})\b/);
@@ -370,38 +376,49 @@ HLT
                 });
             }
 
-            if (label && trimmed) return label + '\n' + trimmed;
-            if (label) return label;
-            var leading = code.match(/^[\t ]*/);
+            var leading = line.match(/^[\t ]*/);
             return (leading ? leading[0] : '') + trimmed;
         }
 
         function cleanAssemblyResponse(raw) {
             var cleaned = raw.replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '');
             var lines = cleaned.split('\n');
-            var resultLines = [];
-            var prevWasEmpty = false;
+            var intermediate = [];
             for (var i = 0; i < lines.length; i++) {
                 var line = lines[i];
                 var commentIdx = line.indexOf(';');
                 if (commentIdx !== -1) {
                     line = line.substring(0, commentIdx);
                 }
-                if (line.trim().length === 0) {
-                    // Permitir una sola línea en blanco entre bloques lógicos (formato humano)
+                var formatted = formatAssemblyLine(line);
+                if (formatted) {
+                    var sub = formatted.split('\n');
+                    for (var s = 0; s < sub.length; s++) {
+                        intermediate.push(sub[s]);
+                    }
+                } else if (line.trim().length === 0) {
+                    intermediate.push('');
+                }
+            }
+
+            var resultLines = [];
+            var prevWasEmpty = false;
+            for (var j = 0; j < intermediate.length; j++) {
+                var item = intermediate[j];
+                var itemTrim = item.trim();
+                if (itemTrim.length === 0) {
                     if (!prevWasEmpty && resultLines.length > 0) {
                         resultLines.push('');
                         prevWasEmpty = true;
                     }
                 } else {
-                    var formatted = formatAssemblyLine(line);
-                    // Evitar etiquetas consecutivas idénticas (ej. bucle:\nbucle:)
-                    if (/^[a-zA-Z0-9_.]+:$/i.test(formatted.trim())) {
-                        if (resultLines.length > 0 && resultLines[resultLines.length - 1].trim() === formatted.trim()) {
+                    // Evitar etiquetas consecutivas idénticas (ej. bucle: seguido de bucle:)
+                    if (/^[a-zA-Z0-9_.]+:$/i.test(itemTrim)) {
+                        if (resultLines.length > 0 && resultLines[resultLines.length - 1].trim() === itemTrim) {
                             continue;
                         }
                     }
-                    resultLines.push(formatted);
+                    resultLines.push(item);
                     prevWasEmpty = false;
                 }
             }
