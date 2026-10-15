@@ -368,6 +368,9 @@ HLT
                 // Si el modelo escribió MOV 232, X (dirección fija de memoria sin corchetes), corregir a MOV [232], X
                 trimmed = trimmed.replace(/^MOV\s+(\d+)\s*,/i, 'MOV [$1],');
 
+                // Si el modelo escribió CMP reg, 256 (256 es ilegal en 8 bits), corregir a CMP reg, 0
+                trimmed = trimmed.replace(/\bCMP\s+([A-D])\s*,\s*256\b/gi, 'CMP $1, 0');
+
                 // Registros A, B, C, D, SP a mayúsculas (excepto dentro de strings)
                 trimmed = trimmed.replace(/\b([abcd]|sp)\b/gi, function(match, r, offset, full) {
                     var quotes = (full.slice(0, offset).match(/['"]/g) || []).length;
@@ -579,15 +582,17 @@ HLT
                 "- Instrucciones soportadas ÚNICAMENTE: MOV, ADD, SUB, INC, DEC, CMP, JMP, JC, JNC, JZ, JNZ, JA, JNA, PUSH, POP, CALL, RET, MUL, DIV, AND, OR, XOR, NOT, SHL, SHR, HLT, DB.",
                 "- NO uses ninguna otra instrucción (NO int, NO syscall, NO lea, NO loop, etc.).",
                 "- Direccionamiento indirecto soportado: [A], [B], [C], [D], [SP+offset], [constante].",
+                "- CONSTANTES Y NÚMEROS (0 a 255): El procesador es estrictamente de 8 bits sin signo (0 a 255). ¡NUNCA uses 256 ni números mayores a 255 porque el ensamblador fallará! En bucles para recorrer hasta la celda 255 de la pantalla, NUNCA compares con 256 (prohibido 'CMP reg, 256'). Usa un contador de cantidad de casillas con DEC (ej. MOV C, 24 y DEC C / JNZ bucle) o compara antes de incrementar: 'CMP reg, 255' seguido de 'JZ fin' y luego 'INC reg'.",
                 "",
                 "REGLAS CRÍTICAS DE ESTILO Y COMPLETITUD (OBLIGATORIAS):",
                 "1. INSTRUCCIONES Y REGISTROS EN MAYÚSCULAS: Escribe siempre en mayúsculas todas las instrucciones y registros (ej. MOV, ADD, SUB, CMP, JMP, JA, JNC, JZ, HLT, A, B, C, D, SP). Las etiquetas van en minúsculas (ej. inicio:, fin:).",
                 "2. ACCESO A MEMORIA CON CORCHETES: Siempre que guardes o leas en memoria o pantalla (direcciones 0 a 255), usa CORCHETES obligatoriamente: MOV [232], A o MOV [C], A. NUNCA escribas MOV 232, A.",
                 "3. ETIQUETAS SIMBÓLICAS EN SALTOS: Para todas las instrucciones de salto y subrutinas (CALL, JMP, JZ, JNZ, JC, JNC, JA, JNA) usa SIEMPRE etiquetas con nombre (ej. CALL imprimir, JZ fin, JMP bucle). NUNCA uses direcciones numéricas directas como operandos de salto.",
-                "4. PROGRAMA COMPLETO Y NO FLOJO: Si el ejercicio pide comparar o verificar registros (ej. A y B) o evaluar condiciones, inicialízalos primero con valores numéricos de prueba razonables (ej. MOV A, 10 y MOV B, 5) para que sea un programa completo y ejecutable desde el primer paso.",
-                "5. ESPACIADO HUMANO Y NATURAL: Separa los bloques lógicos con UNA línea en blanco (por ejemplo, deja una línea en blanco entre la inicialización, el bloque de comparación/lógica, y las etiquetas con HLT). No pegues todas las líneas juntas.",
-                "6. DETENCIÓN: Coloca siempre la instrucción HLT al final o en la etiqueta de salida (ej. fin: HLT) para detener la CPU correctamente.",
-                "7. SIN COMENTARIOS NI MARKDOWN: NO uses comentarios con ';', NO pongas introducciones ni explicaciones, NO uses bloques con ``` ni ```assembly. Devuelve estrictamente el código ensamblador puro."
+                "4. RANGO NUMÉRICO (0..255): Todas las constantes deben ser <= 255. NUNCA escribas 256.",
+                "5. PROGRAMA COMPLETO Y NO FLOJO: Si el ejercicio pide comparar o verificar registros (ej. A y B) o evaluar condiciones, inicialízalos primero con valores numéricos de prueba razonables (ej. MOV A, 10 y MOV B, 5) para que sea un programa completo y ejecutable desde el primer paso.",
+                "6. ESPACIADO HUMANO Y NATURAL: Separa los bloques lógicos con UNA línea en blanco (por ejemplo, deja una línea en blanco entre la inicialización, el bloque de comparación/lógica, y las etiquetas con HLT). No pegues todas las líneas juntas.",
+                "7. DETENCIÓN: Coloca siempre la instrucción HLT al final o en la etiqueta de salida (ej. fin: HLT) para detener la CPU correctamente.",
+                "8. SIN COMENTARIOS NI MARKDOWN: NO uses comentarios con ';', NO pongas introducciones ni explicaciones, NO uses bloques con ``` ni ```assembly. Devuelve estrictamente el código ensamblador puro."
             ].join('\n');
 
             var payload = {
