@@ -389,51 +389,68 @@ HLT
                         throw new Error('Ninguno de los modelos disponibles soporta generateContent.');
                     }
 
+                    // Prioridad inteligente: si el modelo insignia (flash-latest) tiene alta demanda,
+                    // saltar de inmediato a modelos Lite (ultra-rápidos, sin cola) o versiones 3.5 estables.
+                    // Se excluye gemini-3.7 porque activa modo razonamiento deliberado lento.
                     var priorityPatterns = [
                         /gemini-flash-latest$/i,
-                        /gemini-3\.8-flash$/i,
-                        /gemini-3\.7-flash$/i,
-                        /gemini-3\.5-flash$/i,
                         /gemini-flash-lite-latest$/i,
+                        /gemini-3\.5-flash-lite$/i,
+                        /gemini-3\.5-flash$/i,
                         /gemini-3\.1-flash-lite$/i,
+                        /flash-lite/i,
+                        /gemini-3\.8-flash$/i,
                         /flash/i
                     ];
 
                     var ordered = [];
                     for (var p = 0; p < priorityPatterns.length; p++) {
                         for (var i = 0; i < valid.length; i++) {
-                            if (priorityPatterns[p].test(valid[i].name) && ordered.indexOf(valid[i].name) === -1) {
-                                ordered.push(valid[i].name);
+                            var mName = valid[i].name;
+                            // Ignorar 3.7 para evitar esperas largas de razonamiento
+                            if (/3\.7/i.test(mName)) continue;
+                            if (priorityPatterns[p].test(mName) && ordered.indexOf(mName) === -1) {
+                                ordered.push(mName);
                             }
                         }
                     }
 
                     for (var j = 0; j < valid.length; j++) {
-                        if (ordered.indexOf(valid[j].name) === -1) {
-                            ordered.push(valid[j].name);
+                        var extraName = valid[j].name;
+                        if (!/3\.7/i.test(extraName) && ordered.indexOf(extraName) === -1) {
+                            ordered.push(extraName);
                         }
                     }
 
-                    logStep('[PASO 2/4] Prioridad de modelos configurada (' + ordered.length + '): ' + ordered.slice(0, 4).map(function(s){return s.replace('models/','');}).join(', '));
+                    logStep('[PASO 2/4] Prioridad de modelos optimizada (' + ordered.length + '): ' + ordered.slice(0, 4).map(function(s){return s.replace('models/','');}).join(', '));
                     return ordered;
                 });
         }
 
         function tryGenerate(candidates, idx, key, payload) {
             if (idx >= candidates.length) {
-                throw new Error('Todos los modelos disponibles están con alta demanda en este momento. Intenta de nuevo en unos segundos.');
+                throw new Error('Todos los servidores de Google están con alta demanda en este momento. Intenta en 10 segundos.');
             }
             var chosen = candidates[idx];
             var endpoint = chosen.indexOf('models/') === 0 ? chosen : 'models/' + chosen;
             var url = 'https://generativelanguage.googleapis.com/v1beta/' + endpoint + ':generateContent?key=' + encodeURIComponent(key);
             logStep('[PASO 3/4] Enviando petición a ' + endpoint + '...');
+            if (stealthStatus) stealthStatus.textContent = 'Consultando (' + endpoint.replace('models/gemini-', '') + ')...';
+
+            // Timeout con AbortController: si un servidor tarda más de 6 segundos, abortar y saltar al siguiente modelo
+            var controller = new AbortController();
+            var timerId = setTimeout(function() {
+                controller.abort();
+            }, 6000);
 
             return fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload),
+                signal: controller.signal
             })
             .then(function(res) {
+                clearTimeout(timerId);
                 return res.json().then(function(data) {
                     return { ok: res.ok, status: res.status, data: data, model: endpoint };
                 });
@@ -441,14 +458,23 @@ HLT
             .then(function(result) {
                 if (!result.ok) {
                     var errMsg = result.data && result.data.error ? (result.data.error.message || result.data.error.status) : 'HTTP ' + result.status;
-                    // Si hay pico de demanda o saturación temporal en Google, saltar de inmediato al siguiente modelo disponible
+                    // Si hay saturación o límite de Google, saltar de inmediato al siguiente modelo
                     if (result.status === 503 || result.status === 429 || /demand|quota|overload|spikes|temporar/i.test(errMsg)) {
-                        logStep('[AVISO: ALTA DEMANDA en ' + result.model + ']: Reintentando automáticamente con modelo alternativo...');
+                        logStep('[ALTA DEMANDA en ' + result.model + ']: Saltando a modelo alternativo ultrarrápido...');
                         return tryGenerate(candidates, idx + 1, key, payload);
                     }
                     throw new Error(errMsg);
                 }
                 return result;
+            })
+            .catch(function(err) {
+                clearTimeout(timerId);
+                // Si tardó más de 6s o se abortó, saltar al siguiente
+                if (err.name === 'AbortError' || /aborted|timeout/i.test(err.message)) {
+                    logStep('[TIEMPO AGOTADO en ' + endpoint + ' (>6s)]: Saltando a modelo alternativo ultrarrápido...');
+                    return tryGenerate(candidates, idx + 1, key, payload);
+                }
+                throw err;
             });
         }
 
